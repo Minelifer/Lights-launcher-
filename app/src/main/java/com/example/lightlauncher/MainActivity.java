@@ -12,18 +12,27 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.text.format.DateFormat;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.ViewGroup;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 public class MainActivity extends Activity {
@@ -37,6 +46,8 @@ public class MainActivity extends Activity {
 
     private RecyclerView recyclerView;
     private AppAdapter adapter;
+    private TextView clockView;
+    private TextView dateView;
     private boolean firstLoad = true;
 
     /** Номер последнего запроса: результаты устаревших загрузок отбрасываются. */
@@ -53,6 +64,14 @@ public class MainActivity extends Activity {
         }
     };
 
+    /** Обновляет часы раз в минуту и при смене времени, часового пояса или формата. */
+    private final BroadcastReceiver clockReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            updateClock();
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -65,16 +84,15 @@ public class MainActivity extends Activity {
         adapter = new AppAdapter(new ArrayList<>());
 
         recyclerView = new RecyclerView(this);
-        recyclerView.setBackgroundColor(Color.BLACK);
         recyclerView.setLayoutManager(new GridLayoutManager(this, columns));
         recyclerView.setHasFixedSize(true);
         recyclerView.setItemAnimator(null);
         recyclerView.setClipToPadding(false);
         recyclerView.setClipChildren(false);
-        recyclerView.setPadding(padding, padding, padding, padding);
+        recyclerView.setPadding(padding, dp(8), padding, padding);
         recyclerView.setAdapter(adapter);
 
-        setContentView(recyclerView);
+        setContentView(buildDesktop(padding));
 
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -84,6 +102,27 @@ public class MainActivity extends Activity {
         registerReceiver(packageReceiver, filter);
 
         loadApps();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(Intent.ACTION_TIME_TICK);
+        filter.addAction(Intent.ACTION_TIME_CHANGED);
+        filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+        registerReceiver(clockReceiver, filter);
+        updateClock();
+    }
+
+    @Override
+    protected void onStop() {
+        try {
+            unregisterReceiver(clockReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // уже отписаны
+        }
+        super.onStop();
     }
 
     @Override
@@ -105,6 +144,63 @@ public class MainActivity extends Activity {
     private int dp(int value) {
         return (int) TypedValue.applyDimension(
                 TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
+    }
+
+    /** Рабочий стол: сверху часы и дата, ниже сетка приложений, фон с мягким градиентом. */
+    private LinearLayout buildDesktop(int sidePadding) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setClipChildren(false);
+        root.setBackground(new GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                new int[]{0xFF141C2E, Color.BLACK}));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.BOTTOM);
+        header.setPadding(sidePadding, sidePadding, sidePadding, 0);
+
+        clockView = new TextView(this);
+        clockView.setTextColor(Color.WHITE);
+        clockView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 40);
+        clockView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        clockView.setIncludeFontPadding(false);
+
+        dateView = new TextView(this);
+        dateView.setTextColor(0xFF9AA4B5);
+        dateView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        dateView.setIncludeFontPadding(false);
+        LinearLayout.LayoutParams dateParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        dateParams.leftMargin = dp(16);
+        dateParams.bottomMargin = dp(4);
+        dateView.setLayoutParams(dateParams);
+
+        header.addView(clockView);
+        header.addView(dateView);
+
+        root.addView(header, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(recyclerView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+
+        updateClock();
+        return root;
+    }
+
+    private void updateClock() {
+        if (clockView == null || dateView == null) return;
+
+        Date now = new Date();
+        clockView.setText(DateFormat.getTimeFormat(this).format(now));
+
+        Locale locale = Locale.getDefault();
+        String pattern = DateFormat.getBestDateTimePattern(locale, "EEEEdMMMM");
+        String date = new SimpleDateFormat(pattern, locale).format(now);
+        if (!date.isEmpty()) {
+            date = date.substring(0, 1).toUpperCase(locale) + date.substring(1);
+        }
+        dateView.setText(date);
     }
 
     private void loadApps() {
