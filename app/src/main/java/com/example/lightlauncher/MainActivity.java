@@ -10,6 +10,7 @@ import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
@@ -19,9 +20,14 @@ import android.text.format.DateFormat;
 import android.util.DisplayMetrics;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
@@ -30,9 +36,11 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 public class MainActivity extends Activity {
@@ -40,15 +48,34 @@ public class MainActivity extends Activity {
     private static final int ICON_DP = 64;
     private static final int BANNER_W_DP = 96;
     private static final int BANNER_H_DP = 54;
-    /** Примерная ширина одной плитки, по ней считаем число колонок. */
-    private static final int CELL_DP = 160;
+    /** Примерная ширина плитки: по ней считаем число колонок. */
+    private static final int CELL_HOME_DP = 180;
+    private static final int CELL_ALL_DP = 160;
     private static final int RELOAD_DELAY_MS = 400;
 
+    private static final int MUTED_TEXT = 0xFF9AA4B5;
+
     private RecyclerView recyclerView;
+    private GridLayoutManager layoutManager;
     private AppAdapter adapter;
+    private Favorites favorites;
+
+    private LinearLayout menuButton;
+    private TextView menuLabel;
+    private TextView sectionView;
+    private TextView hintView;
     private TextView clockView;
     private TextView dateView;
+
+    private int homeColumns;
+    private int allColumns;
+
+    /** false: главный экран с избранным, true: список всех приложений. */
+    private boolean showAll = false;
     private boolean firstLoad = true;
+    /** Подсказку про пустое избранное показываем только после первой загрузки списка. */
+    private boolean loaded = false;
+    private List<AppInfo> allApps = new ArrayList<>();
 
     /** Номер последнего запроса: результаты устаревших загрузок отбрасываются. */
     private volatile int loadGeneration = 0;
@@ -64,7 +91,7 @@ public class MainActivity extends Activity {
         }
     };
 
-    /** Обновляет часы раз в минуту и при смене времени, часового пояса или формата. */
+    /** Обновляет часы раз в минуту и при смене времени или часового пояса. */
     private final BroadcastReceiver clockReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
@@ -77,22 +104,27 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
 
         DisplayMetrics dm = getResources().getDisplayMetrics();
-        int padding = dp(24);
-        int columns = (int) (dm.widthPixels / dm.density / CELL_DP);
-        columns = Math.max(3, Math.min(8, columns));
+        float widthDp = dm.widthPixels / dm.density;
+        homeColumns = clamp((int) (widthDp / CELL_HOME_DP), 3, 6);
+        allColumns = clamp((int) (widthDp / CELL_ALL_DP), 3, 8);
 
-        adapter = new AppAdapter(new ArrayList<>());
+        favorites = new Favorites(this);
+        adapter = new AppAdapter(favorites, (app, position) -> toggleFavorite(app, position));
 
+        int side = dp(24);
+
+        layoutManager = new GridLayoutManager(this, homeColumns);
         recyclerView = new RecyclerView(this);
-        recyclerView.setLayoutManager(new GridLayoutManager(this, columns));
+        recyclerView.setLayoutManager(layoutManager);
         recyclerView.setHasFixedSize(true);
         recyclerView.setItemAnimator(null);
         recyclerView.setClipToPadding(false);
         recyclerView.setClipChildren(false);
-        recyclerView.setPadding(padding, dp(8), padding, padding);
+        recyclerView.setPadding(side, dp(8), side, side);
         recyclerView.setAdapter(adapter);
 
-        setContentView(buildDesktop(padding));
+        setContentView(buildDesktop(side));
+        applyTexts();
 
         IntentFilter filter = new IntentFilter();
         filter.addAction(Intent.ACTION_PACKAGE_ADDED);
@@ -136,9 +168,26 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    /** Кнопка Home (или повторный запуск лаунчера) возвращает на главный экран. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (showAll) {
+            applyMode(false);
+        }
+    }
+
     @Override
     public void onBackPressed() {
-        // Игнорируем кнопку Назад, чтобы лаунчер не закрывался
+        // Из списка всех приложений Назад ведёт на главный экран, на главном экране лаунчер не закрывается
+        if (showAll) {
+            applyMode(false);
+        }
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private int dp(int value) {
@@ -146,8 +195,10 @@ public class MainActivity extends Activity {
                 TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
     }
 
-    /** Рабочий стол: сверху часы и дата, ниже сетка приложений, фон с мягким градиентом. */
-    private LinearLayout buildDesktop(int sidePadding) {
+    // ---------------------------------------------------------------- интерфейс
+
+    /** Рабочий стол: сверху кнопка меню и часы, ниже избранное (или все приложения), фон с градиентом. */
+    private LinearLayout buildDesktop(int side) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setClipChildren(false);
@@ -157,35 +208,110 @@ public class MainActivity extends Activity {
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.BOTTOM);
-        header.setPadding(sidePadding, sidePadding, sidePadding, 0);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(side, side, side, 0);
 
-        clockView = new TextView(this);
-        clockView.setTextColor(Color.WHITE);
-        clockView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 40);
-        clockView.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        clockView.setIncludeFontPadding(false);
+        menuButton = buildMenuButton();
+        header.addView(menuButton, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        View spacer = new View(this);
+        header.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
 
         dateView = new TextView(this);
-        dateView.setTextColor(0xFF9AA4B5);
+        dateView.setTextColor(MUTED_TEXT);
         dateView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
         dateView.setIncludeFontPadding(false);
         LinearLayout.LayoutParams dateParams = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        dateParams.leftMargin = dp(16);
-        dateParams.bottomMargin = dp(4);
-        dateView.setLayoutParams(dateParams);
+        dateParams.rightMargin = dp(16);
+        header.addView(dateView, dateParams);
 
+        clockView = new TextView(this);
+        clockView.setTextColor(Color.WHITE);
+        clockView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 36);
+        clockView.setTypeface(Typeface.DEFAULT_BOLD);
+        clockView.setIncludeFontPadding(false);
         header.addView(clockView);
-        header.addView(dateView);
+
+        sectionView = new TextView(this);
+        sectionView.setTextColor(MUTED_TEXT);
+        sectionView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        sectionView.setPadding(side, dp(20), side, 0);
+
+        FrameLayout content = new FrameLayout(this);
+        content.setClipChildren(false);
+        content.addView(recyclerView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        hintView = new TextView(this);
+        hintView.setTextColor(MUTED_TEXT);
+        hintView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        hintView.setGravity(Gravity.CENTER);
+        hintView.setPadding(dp(48), 0, dp(48), 0);
+        hintView.setText("Здесь будут ваши избранные приложения.\n\n"
+                + "Откройте «Все приложения», выберите нужное и удерживайте OK, "
+                + "чтобы добавить его на главный экран.");
+        hintView.setVisibility(View.GONE);
+        content.addView(hintView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
 
         root.addView(header, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(recyclerView, new LinearLayout.LayoutParams(
+        root.addView(sectionView, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(content, new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
 
         updateClock();
         return root;
+    }
+
+    /** Кнопка меню: переключает главный экран и список всех приложений. */
+    private LinearLayout buildMenuButton() {
+        LinearLayout button = new LinearLayout(this);
+        button.setOrientation(LinearLayout.HORIZONTAL);
+        button.setGravity(Gravity.CENTER_VERTICAL);
+        button.setFocusable(true);
+        button.setFocusableInTouchMode(false);
+        button.setClickable(true);
+        button.setPadding(dp(18), dp(10), dp(22), dp(10));
+
+        ImageView icon = new ImageView(this);
+        icon.setImageResource(R.drawable.ic_menu);
+        button.addView(icon, new LinearLayout.LayoutParams(dp(24), dp(24)));
+
+        menuLabel = new TextView(this);
+        menuLabel.setTextColor(Color.WHITE);
+        menuLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        labelParams.leftMargin = dp(10);
+        button.addView(menuLabel, labelParams);
+
+        setMenuFocus(button, false);
+        button.setOnFocusChangeListener((v, hasFocus) -> setMenuFocus(v, hasFocus));
+        button.setOnClickListener(v -> applyMode(!showAll));
+        return button;
+    }
+
+    private void setMenuFocus(View button, boolean hasFocus) {
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(28));
+        if (hasFocus) {
+            background.setColor(0xFF3D4A66);
+            background.setStroke(dp(2), Color.WHITE);
+        } else {
+            background.setColor(0x33FFFFFF);
+        }
+        button.setBackground(background);
+        button.setScaleX(hasFocus ? 1.04f : 1.0f);
+        button.setScaleY(hasFocus ? 1.04f : 1.0f);
+    }
+
+    private void applyTexts() {
+        menuLabel.setText(showAll ? "На главный" : "Все приложения");
+        sectionView.setText(showAll ? "Все приложения" : "Избранное");
     }
 
     private void updateClock() {
@@ -202,6 +328,79 @@ public class MainActivity extends Activity {
         }
         dateView.setText(date);
     }
+
+    // ------------------------------------------------------- режимы и избранное
+
+    /** Переключает главный экран и список всех приложений. */
+    private void applyMode(boolean all) {
+        showAll = all;
+        layoutManager.setSpanCount(all ? allColumns : homeColumns);
+        applyTexts();
+        refreshList();
+        focusFirstWhenReady();
+    }
+
+    /** Заполняет список по текущему режиму: либо избранное плитками, либо все приложения. */
+    private void refreshList() {
+        List<AppInfo> list;
+        if (showAll) {
+            list = allApps;
+        } else {
+            Map<String, AppInfo> byPackage = new HashMap<>();
+            for (AppInfo app : allApps) {
+                byPackage.put(app.packageName, app);
+            }
+            list = new ArrayList<>();
+            for (String pkg : favorites.list()) {
+                AppInfo app = byPackage.get(pkg);
+                if (app != null) {
+                    list.add(app);
+                }
+            }
+        }
+        adapter.setApps(list, !showAll);
+        hintView.setVisibility(loaded && !showAll && list.isEmpty() ? View.VISIBLE : View.GONE);
+    }
+
+    private void toggleFavorite(AppInfo app, int position) {
+        boolean added = favorites.toggle(app.packageName);
+        Toast.makeText(this,
+                (added ? "Добавлено в избранное: " : "Убрано из избранного: ") + app.label,
+                Toast.LENGTH_SHORT).show();
+
+        if (showAll) {
+            if (position >= 0) {
+                adapter.notifyItemChanged(position);
+            }
+        } else {
+            refreshList();
+            focusFirstWhenReady();
+        }
+    }
+
+    /** После перерисовки списка отдаёт фокус первой плитке, а если список пуст, кнопке меню. */
+    private void focusFirstWhenReady() {
+        recyclerView.requestLayout();
+        recyclerView.getViewTreeObserver().addOnGlobalLayoutListener(
+                new ViewTreeObserver.OnGlobalLayoutListener() {
+                    @Override
+                    public void onGlobalLayout() {
+                        ViewTreeObserver observer = recyclerView.getViewTreeObserver();
+                        if (observer.isAlive()) {
+                            observer.removeOnGlobalLayoutListener(this);
+                        }
+                        View first = recyclerView.getChildCount() > 0
+                                ? recyclerView.getChildAt(0) : null;
+                        if (first != null) {
+                            first.requestFocus();
+                        } else {
+                            menuButton.requestFocus();
+                        }
+                    }
+                });
+    }
+
+    // -------------------------------------------------------- загрузка списка
 
     private void loadApps() {
         final int generation = ++loadGeneration;
@@ -233,14 +432,12 @@ public class MainActivity extends Activity {
                 if (isFinishing() || isDestroyed() || generation != loadGeneration) {
                     return;
                 }
-                adapter.setApps(apps);
+                allApps = apps;
+                loaded = true;
+                refreshList();
                 if (firstLoad) {
                     firstLoad = false;
-                    recyclerView.post(() -> {
-                        if (recyclerView.getChildCount() > 0) {
-                            recyclerView.getChildAt(0).requestFocus();
-                        }
-                    });
+                    focusFirstWhenReady();
                 }
             });
         }, "load-apps").start();
