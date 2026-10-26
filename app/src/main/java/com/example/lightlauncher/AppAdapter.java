@@ -1,9 +1,12 @@
 package com.example.lightlauncher;
 
+import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -12,18 +15,29 @@ import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
 
-    private final List<AppInfo> apps;
+    private static final int FOCUS_COLOR = 0xFF333333;
 
-    public AppAdapter(List<AppInfo> apps) {
-        this.apps = apps;
+    private final List<AppInfo> apps = new ArrayList<>();
+
+    public AppAdapter(List<AppInfo> initial) {
+        apps.addAll(initial);
+    }
+
+    /** Заменяет список приложений. Вызывать только из UI-потока. */
+    public void setApps(List<AppInfo> newApps) {
+        apps.clear();
+        apps.addAll(newApps);
+        notifyDataSetChanged();
     }
 
     private static int dpToPx(Context context, int dp) {
@@ -36,7 +50,6 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
     public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         Context context = parent.getContext();
         int pad = dpToPx(context, 12);
-        int iconSize = dpToPx(context, 64);
         int itemHeight = dpToPx(context, 130);
 
         LinearLayout layout = new LinearLayout(context);
@@ -49,8 +62,10 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
         layout.setClickable(true);
         layout.setPadding(pad, pad, pad, pad);
 
+        // Один общий «слот» под иконку (64x64) и баннер (96x54), FIT_CENTER сохраняет пропорции
         ImageView icon = new ImageView(context);
-        icon.setLayoutParams(new LinearLayout.LayoutParams(iconSize, iconSize));
+        icon.setLayoutParams(new LinearLayout.LayoutParams(
+                dpToPx(context, 96), dpToPx(context, 64)));
         icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
 
         TextView label = new TextView(context);
@@ -94,32 +109,55 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
             this.icon = icon;
             this.label = label;
 
-            itemView.setOnClickListener(v -> {
-                if (boundApp == null) return;
-                Context context = v.getContext();
-                PackageManager pm = context.getPackageManager();
+            final Context context = itemView.getContext();
 
-                Intent intent = pm.getLeanbackLaunchIntentForPackage(boundApp.packageName);
-                if (intent == null) {
-                    intent = pm.getLaunchIntentForPackage(boundApp.packageName);
-                }
-                if (intent != null) {
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    context.startActivity(intent);
-                }
-            });
+            final GradientDrawable focusBackground = new GradientDrawable();
+            focusBackground.setColor(FOCUS_COLOR);
+            focusBackground.setCornerRadius(dpToPx(context, 8));
+            final float focusLift = dpToPx(context, 8);
+
+            itemView.setOnClickListener(v -> launch(v.getContext(), boundApp));
 
             itemView.setOnFocusChangeListener((v, hasFocus) -> {
                 if (hasFocus) {
-                    v.setBackgroundColor(0xFF333333);
+                    v.setBackground(focusBackground);
                     v.setScaleX(1.06f);
                     v.setScaleY(1.06f);
+                    // Поднимаем выбранную плитку над соседними, чтобы они её не перекрывали
+                    v.setTranslationZ(focusLift);
                 } else {
-                    v.setBackgroundColor(Color.TRANSPARENT);
+                    v.setBackground(null);
                     v.setScaleX(1.0f);
                     v.setScaleY(1.0f);
+                    v.setTranslationZ(0f);
                 }
             });
+        }
+
+        private static void launch(Context context, AppInfo app) {
+            if (app == null) return;
+
+            try {
+                Intent intent;
+                if (app.settings) {
+                    intent = new Intent(Settings.ACTION_SETTINGS);
+                } else {
+                    PackageManager pm = context.getPackageManager();
+                    intent = pm.getLeanbackLaunchIntentForPackage(app.packageName);
+                    if (intent == null) {
+                        intent = pm.getLaunchIntentForPackage(app.packageName);
+                    }
+                }
+
+                if (intent == null) {
+                    Toast.makeText(context, "Не удалось открыть: " + app.label, Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                context.startActivity(intent);
+            } catch (ActivityNotFoundException | SecurityException e) {
+                Toast.makeText(context, "Не удалось открыть: " + app.label, Toast.LENGTH_SHORT).show();
+            }
         }
     }
 }

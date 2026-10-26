@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+    <!-- фон -->
+    <path
+        android:fillColor="#1B2233"
+        android:pathData="M16,0h64a16,16 0 0 1 16,16v64a16,16 0 0 1 -16,16h-64a16,16 0 0 1 -16,-16v-64a16,16 0 0 1 16,-16z" />
+    <!-- колба -->
+    <path
+        android:fillColor="#FFD54A"
+        android:pathData="M28,40a20,20 0 1 1 40,0a20,20 0 1 1 -40,0z" />
+    <!-- горлышко -->
+    <path
+        android:fillColor="#FFD54A"
+        android:pathData="M38,54h20l-4,10h-12z" />
+    <!-- цоколь -->
+    <path
+        android:fillColor="#B0B8C8"
+        android:pathData="M40,66h16v5h-16z" />
+    <path
+        android:fillColor="#B0B8C8"
+        android:pathData="M42,73h12v4h-12z" />
+</vector>

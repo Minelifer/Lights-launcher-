@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Баннер для Android TV (соотношение 16:9, как требует Leanback) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <!-- фон -->
+    <path
+        android:fillColor="#1B2233"
+        android:pathData="M0,0h320v180h-320z" />
+    <!-- свечение -->
+    <path
+        android:fillColor="#33FFD54A"
+        android:pathData="M30,90a60,60 0 1 1 120,0a60,60 0 1 1 -120,0z" />
+    <!-- колба -->
+    <path
+        android:fillColor="#FFD54A"
+        android:pathData="M50,80a40,40 0 1 1 80,0a40,40 0 1 1 -80,0z" />
+    <path
+        android:fillColor="#FFD54A"
+        android:pathData="M72,114h36l-6,18h-24z" />
+    <path
+        android:fillColor="#B0B8C8"
+        android:pathData="M76,136h28v8h-28z" />
+    <path
+        android:fillColor="#B0B8C8"
+        android:pathData="M79,146h22v6h-22z" />
+    <!-- сетка плиток (намёк на лаунчер) -->
+    <path
+        android:fillColor="#3A4660"
+        android:pathData="M184,48h30v30h-30z" />
+    <path
+        android:fillColor="#4B5A7C"
+        android:pathData="M224,48h30v30h-30z" />
+    <path
+        android:fillColor="#3A4660"
+        android:pathData="M264,48h30v30h-30z" />
+    <path
+        android:fillColor="#4B5A7C"
+        android:pathData="M184,88h30v30h-30z" />
+    <path
+        android:fillColor="#FFD54A"
+        android:pathData="M224,88h30v30h-30z" />
+    <path
+        android:fillColor="#4B5A7C"
+        android:pathData="M264,88h30v30h-30z" />
+</vector>
