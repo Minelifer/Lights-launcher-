@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.Outline;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
@@ -14,20 +15,23 @@ import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Показывает приложения в двух видах: цветные плитки (избранное на главном экране)
- * и обычный список (все приложения).
+ * Показывает приложения в двух видах: плитки формата 16:9 (избранное на главном экране)
+ * и обычный список (все приложения). Баннер ТВ-приложения заполняет плитку целиком,
+ * иконка ложится по центру цветной плитки.
  */
 public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
 
@@ -37,7 +41,8 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
     }
 
     private static final int TYPE_PLAIN = 0;
-    private static final int TYPE_TILE = 1;
+    private static final int TYPE_TILE_ICON = 1;
+    private static final int TYPE_TILE_BANNER = 2;
 
     private static final int FOCUS_COLOR = 0xFF333333;
     private static final int FAVORITE_LABEL_COLOR = 0xFFFFD54A;
@@ -83,20 +88,34 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
         return Color.rgb(r + (255 - r) / 5, g + (255 - g) / 5, b + (255 - b) / 5);
     }
 
+    /** Высота плитки: формат 16:9 от ширины ячейки, но не меньше, чем нужно для иконки и подписи. */
+    private static int tileHeight(Context context, ViewGroup parent) {
+        int fallback = dpToPx(context, 124);
+        if (!(parent instanceof RecyclerView)) return fallback;
+
+        RecyclerView.LayoutManager manager = ((RecyclerView) parent).getLayoutManager();
+        int span = manager instanceof GridLayoutManager
+                ? ((GridLayoutManager) manager).getSpanCount() : 1;
+        int width = parent.getWidth() - parent.getPaddingLeft() - parent.getPaddingRight();
+        if (width <= 0 || span <= 0) return fallback;
+
+        return Math.max(dpToPx(context, 110), width / span * 9 / 16);
+    }
+
     @Override
     public int getItemViewType(int position) {
-        return tiles ? TYPE_TILE : TYPE_PLAIN;
+        if (!tiles) return TYPE_PLAIN;
+        return apps.get(position).banner ? TYPE_TILE_BANNER : TYPE_TILE_ICON;
     }
 
     @NonNull
     @Override
     public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
         Context context = parent.getContext();
-        boolean tile = viewType == TYPE_TILE;
+        boolean tile = viewType != TYPE_PLAIN;
+        boolean banner = viewType == TYPE_TILE_BANNER;
 
-        int padH = dpToPx(context, 12);
-        int padV = dpToPx(context, tile ? 8 : 12);
-        int itemHeight = dpToPx(context, tile ? 124 : 130);
+        int itemHeight = tile ? tileHeight(context, parent) : dpToPx(context, 130);
 
         LinearLayout layout = new LinearLayout(context);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -106,30 +125,54 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
         layout.setFocusable(true);
         layout.setFocusableInTouchMode(false);
         layout.setClickable(true);
-        layout.setPadding(padH, padV, padH, padV);
 
-        // Один общий «слот» под иконку (64x64) и баннер (96x54), FIT_CENTER сохраняет пропорции
         ImageView icon = new ImageView(context);
-        icon.setLayoutParams(new LinearLayout.LayoutParams(
-                dpToPx(context, 96), dpToPx(context, 64)));
-        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
-
         TextView label = new TextView(context);
-        LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        labelParams.topMargin = dpToPx(context, 8);
-        label.setLayoutParams(labelParams);
-        label.setMaxLines(1);
-        label.setEllipsize(TextUtils.TruncateAt.END);
-        label.setTextColor(Color.WHITE);
-        label.setTextSize(14);
-        label.setGravity(Gravity.CENTER);
 
-        layout.addView(icon);
-        layout.addView(label);
+        if (banner) {
+            // Баннер на всю плитку со скруглёнными углами, подпись не нужна: название есть на самом баннере
+            int gap = dpToPx(context, 7);
+            layout.setPadding(gap, gap, gap, gap);
 
-        return new ViewHolder(layout, icon, label, tile, listener);
+            icon.setLayoutParams(new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            icon.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            final float radius = dpToPx(context, 8);
+            icon.setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), radius);
+                }
+            });
+            icon.setClipToOutline(true);
+
+            layout.addView(icon);
+        } else {
+            int padH = dpToPx(context, 12);
+            int padV = dpToPx(context, tile ? 8 : 12);
+            layout.setPadding(padH, padV, padH, padV);
+
+            // Слот под иконку 96x64, FIT_CENTER сохраняет пропорции
+            icon.setLayoutParams(new LinearLayout.LayoutParams(
+                    dpToPx(context, 96), dpToPx(context, 64)));
+            icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+
+            LinearLayout.LayoutParams labelParams = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+            labelParams.topMargin = dpToPx(context, 8);
+            label.setLayoutParams(labelParams);
+            label.setMaxLines(1);
+            label.setEllipsize(TextUtils.TruncateAt.END);
+            label.setTextColor(Color.WHITE);
+            label.setTextSize(14);
+            label.setGravity(Gravity.CENTER);
+
+            layout.addView(icon);
+            layout.addView(label);
+        }
+
+        return new ViewHolder(layout, icon, label, tile, banner, listener);
     }
 
     @Override
@@ -138,9 +181,19 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
         holder.boundApp = app;
         holder.label.setText(app.label);
         holder.icon.setImageDrawable(app.icon);
+        holder.itemView.setContentDescription(app.label);
 
         Context context = holder.itemView.getContext();
-        if (holder.tile) {
+        if (holder.banner) {
+            // У баннерной плитки без фокуса фона нет, на фокусе вокруг баннера белая рамка
+            GradientDrawable frame = new GradientDrawable();
+            frame.setColor(Color.TRANSPARENT);
+            frame.setCornerRadius(dpToPx(context, 12));
+            frame.setStroke(dpToPx(context, 3), Color.WHITE);
+
+            holder.normalBackground = null;
+            holder.focusBackground = new InsetDrawable(frame, dpToPx(context, 3));
+        } else if (holder.tile) {
             int color = tileColor(app.packageName);
             int gap = dpToPx(context, 5);
 
@@ -179,16 +232,18 @@ public class AppAdapter extends RecyclerView.Adapter<AppAdapter.ViewHolder> {
         final ImageView icon;
         final TextView label;
         final boolean tile;
+        final boolean banner;
         AppInfo boundApp;
         Drawable normalBackground;
         Drawable focusBackground;
 
         ViewHolder(@NonNull View itemView, ImageView icon, TextView label,
-                   boolean tile, Listener listener) {
+                   boolean tile, boolean banner, Listener listener) {
             super(itemView);
             this.icon = icon;
             this.label = label;
             this.tile = tile;
+            this.banner = banner;
 
             itemView.setOnClickListener(v -> launch(v.getContext(), boundApp));
 
