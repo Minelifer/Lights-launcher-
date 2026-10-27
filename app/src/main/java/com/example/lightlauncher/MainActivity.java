@@ -1,6 +1,7 @@
 package com.example.lightlauncher;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -15,6 +16,8 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.format.DateFormat;
 import android.util.DisplayMetrics;
@@ -52,6 +55,7 @@ public class MainActivity extends Activity {
     private static final int CELL_HOME_DP = 180;
     private static final int CELL_ALL_DP = 160;
     private static final int RELOAD_DELAY_MS = 400;
+    private static final int RAM_UPDATE_MS = 3000;
 
     private static final int MUTED_TEXT = 0xFF9AA4B5;
 
@@ -66,6 +70,8 @@ public class MainActivity extends Activity {
     private TextView hintView;
     private TextView clockView;
     private TextView dateView;
+    private TextView ramLabel;
+    private MemoryBar ramBar;
 
     private int homeColumns;
     private int allColumns;
@@ -81,6 +87,16 @@ public class MainActivity extends Activity {
     private volatile int loadGeneration = 0;
 
     private final Runnable reloadRunnable = this::loadApps;
+
+    /** Индикатор ОЗУ обновляется раз в несколько секунд, пока лаунчер на экране. */
+    private final Handler ramHandler = new Handler(Looper.getMainLooper());
+    private final Runnable ramRunnable = new Runnable() {
+        @Override
+        public void run() {
+            updateMemory();
+            ramHandler.postDelayed(this, RAM_UPDATE_MS);
+        }
+    };
 
     private final BroadcastReceiver packageReceiver = new BroadcastReceiver() {
         @Override
@@ -145,10 +161,13 @@ public class MainActivity extends Activity {
         filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
         registerReceiver(clockReceiver, filter);
         updateClock();
+        ramHandler.removeCallbacks(ramRunnable);
+        ramRunnable.run();
     }
 
     @Override
     protected void onStop() {
+        ramHandler.removeCallbacks(ramRunnable);
         try {
             unregisterReceiver(clockReceiver);
         } catch (IllegalArgumentException ignored) {
@@ -217,6 +236,23 @@ public class MainActivity extends Activity {
 
         View spacer = new View(this);
         header.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1f));
+
+        // Индикатор ОЗУ: подпись и полоска заполнения
+        LinearLayout ramBlock = new LinearLayout(this);
+        ramBlock.setOrientation(LinearLayout.VERTICAL);
+        ramLabel = new TextView(this);
+        ramLabel.setTextColor(MUTED_TEXT);
+        ramLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        ramLabel.setIncludeFontPadding(false);
+        ramBlock.addView(ramLabel);
+        ramBar = new MemoryBar(this);
+        LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(dp(140), dp(6));
+        barParams.topMargin = dp(6);
+        ramBlock.addView(ramBar, barParams);
+        LinearLayout.LayoutParams ramParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ramParams.rightMargin = dp(32);
+        header.addView(ramBlock, ramParams);
 
         dateView = new TextView(this);
         dateView.setTextColor(MUTED_TEXT);
@@ -327,6 +363,30 @@ public class MainActivity extends Activity {
             date = date.substring(0, 1).toUpperCase(locale) + date.substring(1);
         }
         dateView.setText(date);
+    }
+
+    private void updateMemory() {
+        if (ramLabel == null || ramBar == null) return;
+
+        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        if (manager == null) return;
+
+        ActivityManager.MemoryInfo info = new ActivityManager.MemoryInfo();
+        manager.getMemoryInfo(info);
+        long total = info.totalMem;
+        if (total <= 0) return;
+
+        long used = Math.max(0, total - info.availMem);
+        float fraction = (float) used / total;
+        int color = fraction >= 0.85f ? 0xFFE53935 : fraction >= 0.70f ? 0xFFFFB300 : 0xFF4CAF50;
+
+        ramLabel.setText(String.format(Locale.getDefault(), "ОЗУ %.1f / %.1f ГБ",
+                toGb(used), toGb(total)));
+        ramBar.setFraction(fraction, color);
+    }
+
+    private static double toGb(long bytes) {
+        return bytes / (1024.0 * 1024.0 * 1024.0);
     }
 
     // ------------------------------------------------------- режимы и избранное
