@@ -49,10 +49,11 @@ import java.util.Set;
 public class MainActivity extends Activity {
 
     private static final int ICON_DP = 64;
-    private static final int BANNER_W_DP = 96;
-    private static final int BANNER_H_DP = 54;
+    // Баннеры хранятся в формате 16:9 и заполняют плитку целиком, поэтому нужен запас по размеру
+    private static final int BANNER_W_DP = 224;
+    private static final int BANNER_H_DP = 126;
     /** Примерная ширина плитки: по ней считаем число колонок. */
-    private static final int CELL_HOME_DP = 180;
+    private static final int CELL_HOME_DP = 200;
     private static final int CELL_ALL_DP = 160;
     private static final int RELOAD_DELAY_MS = 400;
     private static final int RAM_UPDATE_MS = 3000;
@@ -229,6 +230,9 @@ public class MainActivity extends Activity {
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(side, side, side, 0);
+        // Иначе увеличенная при фокусе кнопка обрезается по краю отступов шапки
+        header.setClipToPadding(false);
+        header.setClipChildren(false);
 
         menuButton = buildMenuButton();
         header.addView(menuButton, new LinearLayout.LayoutParams(

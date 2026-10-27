@@ -24,8 +24,8 @@ jobs:
         with:
           gradle-version: '8.5'
 
-      # Постоянный ключ подписи берётся из GitHub Secrets (Settings -> Secrets and variables -> Actions).
-      # Без него сборка подпишется временным debug-ключом, и обновить установленное приложение не получится.
+      # Личный ключ подписи можно положить в GitHub Secrets (Settings -> Secrets and variables -> Actions).
+      # Без него сборка подписывается общим ключом из репозитория, он одинаковый во всех сборках.
       - name: Prepare signing key
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -34,7 +34,7 @@ jobs:
             echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
             echo "KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
           else
-            echo "::warning::KEYSTORE_BASE64 не задан, APK будет подписан debug-ключом"
+            echo "::notice::KEYSTORE_BASE64 не задан, APK подписан общим ключом app/ci-debug.keystore"
           fi
 
       - name: Build Release APK
